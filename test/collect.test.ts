@@ -280,7 +280,7 @@ describe("collectRows", () => {
         samplingMetadatas: [{}],
         dataTruncationReasons: [
           { dataTruncationType: "DATA_TRUNCATION_TYPE_DATE_RANGE", dataTruncationDate: "2026-09-30" },
-          { dataTruncationMessage: "Data is truncated." },
+          { dataTruncationMessage: "Data is truncated.", dataTruncationDateRanges: [{ startDate: "2026-09-28", endDate: "2026-09-29" }] },
         ],
       },
     });
@@ -292,8 +292,8 @@ describe("collectRows", () => {
       'some hostnames were rolled into an "(other)" row, so a hostname shown with zeros may have traffic',
       "the report is subject to thresholding, so small numbers may be withheld",
       "the report is sampled",
-      "the report is truncated (DATA_TRUNCATION_TYPE_DATE_RANGE, from 2026-09-30)",
-      "the report is truncated (Data is truncated.)",
+      "the report is truncated (DATA_TRUNCATION_TYPE_DATE_RANGE, data before 2026-09-30)",
+      "the report is truncated (Data is truncated., 2026-09-28..2026-09-29)",
     ]);
     const md = renderReportMarkdown(rows, m, range, problems, [], notes);
     expect(md).toContain("## Notes");

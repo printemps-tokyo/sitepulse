@@ -134,7 +134,13 @@ export async function ga4ByHost(propertyId: string, range: Ga4Range, deps: Deps)
       dataLossFromOtherRow?: boolean;
       subjectToThresholding?: boolean;
       samplingMetadatas?: unknown[];
-      dataTruncationReasons?: { dataTruncationType?: string; dataTruncationMessage?: string; dataTruncationDate?: string }[];
+      dataTruncationReasons?: {
+        dataTruncationType?: string;
+        dataTruncationMessage?: string;
+        /** "data before this date is truncated" */
+        dataTruncationDate?: string;
+        dataTruncationDateRanges?: { startDate?: string; endDate?: string }[];
+      }[];
     };
   };
   const out = new Map<string, Ga4Totals>();
@@ -166,8 +172,12 @@ export async function ga4ByHost(propertyId: string, range: Ga4Range, deps: Deps)
     if (md.subjectToThresholding) notes.add("the report is subject to thresholding, so small numbers may be withheld");
     if ((md.samplingMetadatas ?? []).length > 0) notes.add("the report is sampled");
     for (const r of md.dataTruncationReasons ?? []) {
-      const why = r.dataTruncationMessage || r.dataTruncationType || "no reason given";
-      notes.add(`the report is truncated (${why}${r.dataTruncationDate ? `, from ${r.dataTruncationDate}` : ""})`);
+      const parts = [
+        r.dataTruncationMessage || r.dataTruncationType || "no reason given",
+        ...(r.dataTruncationDate ? [`data before ${r.dataTruncationDate}`] : []),
+        ...(r.dataTruncationDateRanges ?? []).map((d) => `${d.startDate ?? "?"}..${d.endDate ?? "?"}`),
+      ];
+      notes.add(`the report is truncated (${parts.join(", ")})`);
     }
     const rows = body.rows ?? [];
     for (const row of rows) {
