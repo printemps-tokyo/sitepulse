@@ -43,7 +43,11 @@ export interface GscMatch {
 /**
  * The Search Console property for a host.
  *
- * 1. A URL-prefix property at the root of that exact host, https first.
+ * `host` is a lowercase hostname; `sites` should hold only verified
+ * properties (an unverified one cannot be queried).
+ *
+ * 1. A URL-prefix property at the root of that exact host, on the default
+ *    port, https first. It covers only that protocol's pages.
  * 2. Otherwise the longest Domain property that is the host or a parent of
  *    it, filtered to the host's pages.
  * 3. Otherwise none.
@@ -54,7 +58,8 @@ export function matchGsc(host: string, sites: GscSite[]): GscMatch | undefined {
     sites.find((s) => {
       try {
         const u = new URL(s.siteUrl);
-        return u.protocol === `${scheme}:` && u.hostname.toLowerCase() === host && u.pathname === "/";
+        // A property on another port covers other pages, not this host's.
+        return u.protocol === `${scheme}:` && u.hostname.toLowerCase() === host && u.port === "" && u.pathname === "/";
       } catch {
         return false;
       }

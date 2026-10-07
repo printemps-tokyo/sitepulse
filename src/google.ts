@@ -113,15 +113,32 @@ export interface Ga4Range {
   endDate: string;
 }
 
+export interface Ga4ByHost {
+  /** Keyed by hostName as GA4 returned it. */
+  hosts: Map<string, Ga4Totals>;
+  /** Report quality flags from ResponseMetaData (thresholding, sampling, "(other)" rows, truncation). */
+  notes: string[];
+}
+
 /**
  * GA4 totals per hostName for a range. Each row is GA4's own total for that
  * hostname (users and sessions deduplicated across the range within it).
  * The hostName dimension is "the subdomain and domain names of a URL"
  * (GA4 API schema).
  */
-export async function ga4ByHost(propertyId: string, range: Ga4Range, deps: Deps): Promise<Map<string, Ga4Totals>> {
-  type Body = { rowCount?: number; rows?: { dimensionValues?: { value?: string }[]; metricValues?: { value?: string }[] }[] };
+export async function ga4ByHost(propertyId: string, range: Ga4Range, deps: Deps): Promise<Ga4ByHost> {
+  type Body = {
+    rowCount?: number;
+    rows?: { dimensionValues?: { value?: string }[]; metricValues?: { value?: string }[] }[];
+    metadata?: {
+      dataLossFromOtherRow?: boolean;
+      subjectToThresholding?: boolean;
+      samplingMetadatas?: unknown[];
+      dataTruncationReasons?: string[];
+    };
+  };
   const out = new Map<string, Ga4Totals>();
+  const notes = new Set<string>();
   // Paged with offset/limit until rowCount rows are read (runReport reference).
   for (let offset = 0, page = 0; page < 100; page++) {
     let body: Body;
@@ -144,17 +161,20 @@ export async function ga4ByHost(propertyId: string, range: Ga4Range, deps: Deps)
     } catch (err) {
       throw new Error(`GA4 runReport for ${propertyId} failed (${(err as Error).message})`);
     }
+    const md = body.metadata ?? {};
+    if (md.dataLossFromOtherRow) notes.add('some hostnames were rolled into an "(other)" row, so a hostname shown with zeros may have traffic');
+    if (md.subjectToThresholding) notes.add("the report is subject to thresholding, so small numbers may be withheld");
+    if ((md.samplingMetadatas ?? []).length > 0) notes.add("the report is sampled");
+    for (const r of md.dataTruncationReasons ?? []) notes.add(`the report is truncated (${r})`);
     const rows = body.rows ?? [];
     for (const row of rows) {
-      const host = (row.dimensionValues?.[0]?.value ?? "").toLowerCase();
       const v = row.metricValues ?? [];
       const n = (i: number) => Number(v[i]?.value ?? 0);
-      const prev = out.get(host) ?? { users: 0, sessions: 0, pageviews: 0 };
-      // hostName values differing only in case fold together; users may then overlap.
-      out.set(host, { users: prev.users + n(0), sessions: prev.sessions + n(1), pageviews: prev.pageviews + n(2) });
+      // Users and sessions are deduplicated per row, so rows are never added together.
+      out.set(row.dimensionValues?.[0]?.value ?? "", { users: n(0), sessions: n(1), pageviews: n(2) });
     }
     offset += rows.length;
-    if (rows.length === 0 || offset >= (body.rowCount ?? 0)) return out;
+    if (rows.length === 0 || offset >= (body.rowCount ?? 0)) return { hosts: out, notes: [...notes] };
   }
   throw new Error(`GA4 runReport for ${propertyId} returned more than 100 pages; stopping`);
 }

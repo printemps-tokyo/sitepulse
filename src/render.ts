@@ -1,6 +1,6 @@
 /** Markdown and JSON output. Pure. */
 
-import type { Mapping, Problem, Row } from "./collect.js";
+import type { Mapping, Note, Problem, Row } from "./collect.js";
 import { daysBetween, matchGsc, type GscMatch, type Range } from "./match.js";
 import type { GscSite } from "./types.js";
 
@@ -34,7 +34,7 @@ export function describeRange(range: Range, zones: string[] = []): string {
     case "search-console":
       return `${days}, ending on the earliest last day of complete Search Console data. ${tz}`;
     case "partial":
-      return `${days}, ending on the earliest last day of complete Search Console data among the properties that reported one; some did not (see Errors). ${tz}`;
+      return `${days}, ending on the earliest last day of complete Search Console data among the properties that reported one; the others did not report one (failed requests are listed under Errors), so their newest days may still change. ${tz}`;
     case "assumed":
       return `${days}: Search Console did not report where complete data ends, so the range ends on the last day complete in every time zone involved, and Search Console's newest days may still change. ${tz}`;
     case "ga4":
@@ -50,11 +50,27 @@ function allProblems(m: Mapping, problems: Problem[]): Problem[] {
   ];
 }
 
+function label(source: Problem["source"]): string {
+  return source === "ga4" ? "GA4 property" : "Search Console";
+}
+
 function appendProblems(lines: string[], m: Mapping, problems: Problem[]): void {
   const all = allProblems(m, problems);
   if (all.length === 0) return;
   lines.push("", "## Errors");
-  for (const p of all) lines.push(`- ${p.source === "ga4" ? "GA4 property" : "Search Console"} ${p.subject}: ${p.error}`);
+  for (const p of all) lines.push(`- ${label(p.source)} ${p.subject}: ${p.error}`);
+}
+
+function appendNotes(lines: string[], m: Mapping, notes: Note[]): void {
+  const all = [
+    ...(m.unverifiedSites.length > 0
+      ? [`Search Console properties skipped as unverified (siteUnverifiedUser): ${m.unverifiedSites.map((s) => s.siteUrl).join(", ")}.`]
+      : []),
+    ...notes.map((n) => `${label(n.source)} ${n.subject}: ${n.note}.`),
+  ];
+  if (all.length === 0) return;
+  lines.push("", "## Notes");
+  for (const n of all) lines.push(`- ${n}`);
 }
 
 /** --list: each GA4 property, its stream hosts, and the Search Console property each host would use. */
@@ -72,11 +88,12 @@ export function renderMappingMarkdown(m: Mapping): string {
     "",
     "Reports have one row per hostname GA4 recorded, which can differ from the stream hosts above (one tag can serve several subdomains); each is matched the same way.",
   );
+  appendNotes(lines, m, []);
   appendProblems(lines, m, []);
   return lines.join("\n") + "\n";
 }
 
-export function renderReportMarkdown(rows: Row[], m: Mapping, range: Range, problems: Problem[], unused: GscSite[]): string {
+export function renderReportMarkdown(rows: Row[], m: Mapping, range: Range, problems: Problem[], unused: GscSite[], notes: Note[] = []): string {
   const lines = ["# sitepulse", "", describeRange(range, timeZones(m)), ""];
   lines.push(
     "| Host | GA4 property | Users | Sessions | Pageviews | Clicks | Impressions | CTR | Position | Search Console |",
@@ -99,11 +116,12 @@ export function renderReportMarkdown(rows: Row[], m: Mapping, range: Range, prob
   if (unused.length > 0) {
     lines.push("", `Search Console properties no row used: ${unused.map((s) => s.siteUrl).join(", ")}.`);
   }
+  appendNotes(lines, m, notes);
   appendProblems(lines, m, problems);
   return lines.join("\n") + "\n";
 }
 
-export function renderReportJson(rows: Row[], m: Mapping, range: Range, problems: Problem[], unused: GscSite[]): string {
+export function renderReportJson(rows: Row[], m: Mapping, range: Range, problems: Problem[], unused: GscSite[], notes: Note[] = []): string {
   return (
     JSON.stringify(
       {
@@ -124,6 +142,8 @@ export function renderReportJson(rows: Row[], m: Mapping, range: Range, problems
           ...(r.gscNote ? { searchConsoleNote: r.gscNote } : {}),
         })),
         unusedSearchConsoleProperties: unused.map((s) => s.siteUrl),
+        unverifiedSearchConsoleProperties: m.unverifiedSites.map((s) => s.siteUrl),
+        notes,
         errors: allProblems(m, problems),
       },
       null,
@@ -144,6 +164,7 @@ export function renderMappingJson(m: Mapping): string {
           }),
         })),
         searchConsoleProperties: m.sites,
+        unverifiedSearchConsoleProperties: m.unverifiedSites,
         errors: allProblems(m, []),
       },
       null,

@@ -20,6 +20,7 @@ const sites = [
   { siteUrl: "https://shop.example.com/jp/", permissionLevel: "siteOwner" },
   { siteUrl: "sc-domain:kweqoo.net", permissionLevel: "siteFullUser" },
   { siteUrl: "sc-domain:deep.example.com", permissionLevel: "siteOwner" },
+  { siteUrl: "https://example.com:8443/", permissionLevel: "siteOwner" },
 ];
 
 describe("hostOf and isHostname", () => {
@@ -48,6 +49,12 @@ describe("matchGsc", () => {
     expect(matchGsc("a.deep.example.com", sites)).toEqual({ site: sites[5], filterHost: "a.deep.example.com" });
     // A URL-prefix property below the root does not cover the host.
     expect(matchGsc("shop.example.com", sites)).toEqual({ site: sites[0], filterHost: "shop.example.com" });
+  });
+
+  it("ignores a URL-prefix property on another port, whatever the listing order", () => {
+    expect(matchGsc("example.com", sites)).toEqual({ site: sites[0], filterHost: "example.com" });
+    expect(matchGsc("example.com", [...sites].reverse())).toEqual({ site: sites[0], filterHost: "example.com" });
+    expect(matchGsc("example.com", [sites[6]!])).toBeUndefined();
   });
 
   it("does not match a lookalike domain", () => {

@@ -18,6 +18,7 @@ import {
   gscTotalsOf,
   type Deps,
   type GscQueryBody,
+  type GscQueryResponse,
 } from "./google.js";
 import {
   addDays,
@@ -40,9 +41,19 @@ export interface Problem {
   error: string;
 }
 
+/** Something worth knowing about the numbers that is not an error (exit code stays 0). */
+export interface Note {
+  source: "ga4" | "searchConsole";
+  subject: string;
+  note: string;
+}
+
 export interface Mapping {
   properties: Ga4Property[];
+  /** Search Console properties that can be queried. */
   sites: GscSite[];
+  /** Listed with permissionLevel siteUnverifiedUser: they cannot be queried, so they are never matched. */
+  unverifiedSites: GscSite[];
   /** Set when Search Console could not be listed at all (for example the API is not enabled). */
   gscError?: string;
   problems: Problem[];
@@ -98,14 +109,21 @@ export async function buildMapping(deps: Deps): Promise<Mapping> {
     return { ...p, hosts, timeZone };
   });
 
-  let sites: GscSite[] = [];
+  let listedSites: GscSite[] = [];
   let gscError: string | undefined;
   try {
-    sites = await gscSites(deps);
+    listedSites = await gscSites(deps);
   } catch (err) {
     gscError = (err as Error).message;
   }
-  return { properties, sites, problems, ...(gscError ? { gscError } : {}) };
+  const unverified = (s: GscSite) => s.permissionLevel === "siteUnverifiedUser";
+  return {
+    properties,
+    sites: listedSites.filter((s) => !unverified(s)),
+    unverifiedSites: listedSites.filter(unverified),
+    problems,
+    ...(gscError ? { gscError } : {}),
+  };
 }
 
 function gscScope(m: GscMatch): Partial<GscQueryBody> {
@@ -128,7 +146,7 @@ export interface ReportOptions {
 /**
  * The shared range, as explicit dates.
  *
- * Fixed: as given. Otherwise every visible Search Console property is asked
+ * Fixed: as given. Otherwise every verified Search Console property is asked
  * once for fresh data (last 10 days) and its metadata.firstIncompleteDate;
  * the range ends on the earliest last complete day. A probe that fails is a
  * problem (reported, exit 1), not a silent "no boundary". With no Search
@@ -174,44 +192,71 @@ export interface Row {
   gscNote?: string;
 }
 
+const ZERO: Ga4Totals = { users: 0, sessions: 0, pageviews: 0 };
+
 /**
  * Rows for every property: one per hostname GA4 recorded in the range, plus
  * any web stream hostname that recorded nothing (so a quiet site still shows,
  * with zeros). A property whose GA4 report fails gets one row per stream host
- * and a problem.
+ * and a problem. The same Search Console property and host is queried once,
+ * even when several GA4 properties recorded that host.
  */
-export async function collectRows(m: Mapping, range: Range, deps: Deps): Promise<{ rows: Row[]; problems: Problem[] }> {
+export async function collectRows(m: Mapping, range: Range, deps: Deps): Promise<{ rows: Row[]; problems: Problem[]; notes: Note[] }> {
   const problems: Problem[] = [];
+  const notes: Note[] = [];
+  const queries = new Map<string, Promise<GscQueryResponse>>();
+  const query = (gsc: GscMatch): Promise<GscQueryResponse> => {
+    const key = `${gsc.site.siteUrl}\n${gsc.filterHost ?? ""}`;
+    let q = queries.get(key);
+    if (!q) {
+      q = gscQuery(gsc.site.siteUrl, { startDate: range.start, endDate: range.end, dataState: "final", ...gscScope(gsc) }, deps);
+      queries.set(key, q);
+    }
+    return q;
+  };
+  const failed = new Set<string>();
   const perProperty = await pool(m.properties, async (property): Promise<Row[]> => {
     let byHost: Map<string, Ga4Totals> | undefined;
     try {
-      byHost = await ga4ByHost(property.id, { startDate: range.start, endDate: range.end }, deps);
+      const report = await ga4ByHost(property.id, { startDate: range.start, endDate: range.end }, deps);
+      byHost = report.hosts;
+      for (const note of report.notes) notes.push({ source: "ga4", subject: property.id, note });
     } catch (err) {
       problems.push({ source: "ga4", subject: property.id, error: (err as Error).message });
     }
-    const hosts = [...new Set([...(byHost ? [...byHost.keys()] : []), ...property.hosts])];
+    // GA4 hostNames as recorded, then stream hosts GA4 did not record under any casing.
+    const recorded = byHost ? [...byHost.keys()] : [];
+    const seen = new Set(recorded.map((h) => h.toLowerCase()));
+    const hosts = [...recorded, ...property.hosts.filter((h) => !seen.has(h))];
     const ordered = hosts.sort((a, b) => (byHost?.get(b)?.users ?? 0) - (byHost?.get(a)?.users ?? 0) || a.localeCompare(b));
-    if (ordered.length === 0) return [{ property, host: "", gscNote: "no web data stream and no traffic" }];
+    if (ordered.length === 0) {
+      return [{ property, host: "", ...(byHost ? { ga4: ZERO } : {}), gscNote: "no web data stream and no traffic" }];
+    }
     return pool(ordered, async (host): Promise<Row> => {
       const row: Row = { property, host };
-      if (byHost) row.ga4 = byHost.get(host) ?? { users: 0, sessions: 0, pageviews: 0 };
-      const gsc = isHostname(host) ? matchGsc(host, m.sites) : undefined;
+      if (byHost) row.ga4 = byHost.get(host) ?? ZERO;
+      const name = host.toLowerCase();
+      const gsc = isHostname(name) ? matchGsc(name, m.sites) : undefined;
       if (!gsc) {
-        row.gscNote = m.gscError ? "Search Console unavailable" : isHostname(host) ? "no Search Console property" : "not a hostname";
+        row.gscNote = m.gscError ? "Search Console unavailable" : isHostname(name) ? "no Search Console property" : "not a hostname";
         return row;
       }
       row.gsc = gsc;
       try {
-        const res = await gscQuery(gsc.site.siteUrl, { startDate: range.start, endDate: range.end, dataState: "final", ...gscScope(gsc) }, deps);
+        const res = await query(gsc);
         row.gscTotals = gscTotalsOf(res);
         if (res.responseAggregationType) row.gscAggregation = res.responseAggregationType;
       } catch (err) {
-        problems.push({ source: "searchConsole", subject: `${gsc.site.siteUrl} (${host})`, error: (err as Error).message });
+        const subject = gsc.filterHost ? `${gsc.site.siteUrl} (${gsc.filterHost})` : gsc.site.siteUrl;
+        if (!failed.has(subject)) {
+          failed.add(subject);
+          problems.push({ source: "searchConsole", subject, error: (err as Error).message });
+        }
       }
       return row;
     });
   });
-  return { rows: perProperty.flat(), problems };
+  return { rows: perProperty.flat(), problems, notes };
 }
 
 /** Search Console properties that no row used. */

@@ -96,12 +96,17 @@ printed.
   also gets a row, with zeros if it recorded nothing, so a quiet site still
   shows. A hostName that is not a hostname (such as `(not set)`) gets a row
   without Search Console numbers.
-- Each hostname is matched to a Search Console property: a URL-prefix
-  property at the root of the same host (https first), otherwise the closest
+- Each hostname (in lowercase) is matched to a Search Console property: a
+  URL-prefix property at the root of the same host on the default port
+  (https first; it covers only that protocol's pages), otherwise the closest
   Domain property that covers it (`sc-domain:example.com` covers
   `example.com` and `shop.example.com`). A Domain property is filtered to the
   host's pages (http or https, any port), so Search Console aggregates by
   page; the JSON output gives each row's `aggregation`.
+- Properties listed with `siteUnverifiedUser` permission cannot be queried, so
+  they are never matched and are listed under Notes.
+- The same Search Console property and host is queried once, even when
+  several GA4 properties recorded that host.
 - Run `--list` to see each property's stream hosts and their matches. Search
   Console properties no row used are listed at the end of a report.
 
@@ -132,7 +137,12 @@ printed.
 
 - GA4: `totalUsers`, `sessions`, `screenPageViews` per `hostName`, so users
   and sessions are GA4's own deduplicated totals for that hostname over the
-  range.
+  range. Rows are never added together, so hostName values that differ only
+  in case stay separate rows.
+- When GA4 says a report is thresholded, sampled, truncated or has an
+  `(other)` row
+  ([ResponseMetaData](https://developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/ResponseMetaData)),
+  that is listed under Notes; it does not change the exit code.
 - Search Console: clicks, impressions, CTR and average position from a query
   with no dimensions and complete data only (`dataState: final`); position
   shows `-` when there were no impressions.

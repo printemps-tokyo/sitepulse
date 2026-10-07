@@ -137,14 +137,14 @@ async function main(): Promise<number> {
     } else {
       const fixed = values.start ? { start: values.start, end: values.end } : {};
       const { range, problems: rangeProblems } = await rangeFor(mapping, { days, ...fixed }, new Date(), deps);
-      const { rows, problems: rowProblems } = await collectRows(mapping, range, deps);
+      const { rows, problems: rowProblems, notes } = await collectRows(mapping, range, deps);
       const problems = [...rangeProblems, ...rowProblems];
       failed ||= problems.length > 0;
       const unused = unusedSites(mapping, rows);
       output =
         format === "json"
-          ? renderReportJson(rows, mapping, range, problems, unused)
-          : renderReportMarkdown(rows, mapping, range, problems, unused);
+          ? renderReportJson(rows, mapping, range, problems, unused, notes)
+          : renderReportMarkdown(rows, mapping, range, problems, unused, notes);
     }
     if (values.output) {
       await writeFile(values.output, output, "utf8");

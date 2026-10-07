@@ -13,6 +13,10 @@ interface Options {
   failProbe?: string;
   noBoundary?: string;
   noGsc?: boolean;
+  /** GA4 metadata flags for property 2's report. */
+  ga4Meta?: Record<string, unknown>;
+  /** Property 1 records its host in two casings, and property 2 also records it. */
+  caseVariants?: boolean;
 }
 
 /** 2026-10-07 05:00 in Tokyo, 2026-10-06 13:00 in Los Angeles. */
@@ -67,8 +71,12 @@ function fakeGoogle(opts: Options = {}) {
     if (prop) return json({ name: `properties/${prop[1]}`, timeZone: prop[1] === "1" ? "America/Los_Angeles" : "Asia/Tokyo" });
     if (url.includes(":runReport")) {
       if (opts.failGa4 && url.includes(`/properties/${opts.failGa4}:`)) return json({ error: { message: "denied" } }, 403);
-      if (url.includes("/properties/1:")) return json({ rowCount: 1, rows: [ga4Row("cars.printemps.tokyo", 10)] });
+      if (url.includes("/properties/1:")) {
+        if (opts.caseVariants) return json({ rowCount: 2, rows: [ga4Row("kabuto-zukan.kweqoo.net", 7), ga4Row("Cars.Printemps.Tokyo", 2)] });
+        return json({ rowCount: 1, rows: [ga4Row("cars.printemps.tokyo", 10)] });
+      }
       if (url.includes("/properties/2:")) {
+        if (opts.ga4Meta) return json({ rowCount: 1, rows: [ga4Row("kabuto-zukan.kweqoo.net", 40)], metadata: opts.ga4Meta });
         // Two pages: the stream host recorded nothing, subdomains did.
         if (body?.offset === "0") return json({ rowCount: 3, rows: [ga4Row("toy-zukan.kweqoo.net", 5), ga4Row("kabuto-zukan.kweqoo.net", 40)] });
         return json({ rowCount: 3, rows: [ga4Row("(not set)", 1)] });
@@ -82,6 +90,7 @@ function fakeGoogle(opts: Options = {}) {
         siteEntry: [
           { siteUrl: "sc-domain:kweqoo.net", permissionLevel: "siteFullUser" },
           { siteUrl: "https://other.example/", permissionLevel: "siteOwner" },
+          { siteUrl: "https://kabuto-zukan.kweqoo.net/", permissionLevel: "siteUnverifiedUser" },
         ],
       });
     }
@@ -126,6 +135,16 @@ describe("buildMapping", () => {
     expect(m.sites).toEqual([]);
     expect(renderMappingMarkdown(m)).toContain("- (Search Console unavailable)");
   });
+
+  it("never matches or probes an unverified Search Console property", async () => {
+    const { deps, calls } = fakeGoogle();
+    const m = await buildMapping(deps);
+    expect(m.sites.map((s) => s.siteUrl)).toEqual(["sc-domain:kweqoo.net", "https://other.example/"]);
+    expect(m.unverifiedSites.map((s) => s.siteUrl)).toEqual(["https://kabuto-zukan.kweqoo.net/"]);
+    await rangeFor(m, { days: 7 }, NOW, deps);
+    expect(calls.some((c) => c.url.includes(encodeURIComponent("https://kabuto-zukan.kweqoo.net/")))).toBe(false);
+    expect(renderMappingMarkdown(m)).toContain("skipped as unverified (siteUnverifiedUser): https://kabuto-zukan.kweqoo.net/");
+  });
 });
 
 describe("rangeFor", () => {
@@ -144,6 +163,17 @@ describe("rangeFor", () => {
     expect(range).toEqual({ start: "2026-09-28", end: "2026-10-04", basis: "partial" });
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatchObject({ source: "searchConsole", subject: "https://other.example/" });
+  });
+
+  it("is partial without an error when a property answers but reports no boundary", async () => {
+    const { deps } = fakeGoogle({ noBoundary: "https://other.example/" });
+    const m = await buildMapping(deps);
+    const { range, problems } = await rangeFor(m, { days: 7 }, NOW, deps);
+    expect(range.basis).toBe("partial");
+    expect(problems).toEqual([]);
+    const md = renderReportMarkdown([], m, range, problems, []);
+    expect(md).toContain("the others did not report one");
+    expect(md).not.toContain("## Errors");
   });
 
   it("assumes the earliest yesterday when no property reports a boundary", async () => {
@@ -184,7 +214,7 @@ describe("collectRows", () => {
       ["2", "toy-zukan.kweqoo.net", 5, 1],
       ["2", "(not set)", 1, "not a hostname"],
       ["2", "kweqoo.net", 0, 1],
-      ["3", "", undefined, "no web data stream and no traffic"],
+      ["3", "", 0, "no web data stream and no traffic"],
     ]);
     expect(rows[1]?.gscAggregation).toBe("byPage");
     // GA4 and Search Console got the same explicit dates; Domain queries were filtered to each host.
@@ -203,6 +233,7 @@ describe("collectRows", () => {
     expect(md).toContain("aggregated by page");
     expect(md).toContain("no row used: https://other.example/");
     expect(md).not.toContain("## Errors");
+    expect(md).toContain("| - | app only | 0 | 0 | 0 | - | - | - | - | - (no web data stream and no traffic) |");
     const json = JSON.parse(renderReportJson(rows, m, range, problems, unusedSites(m, rows)));
     expect(json.rows[1].searchConsole).toEqual({
       siteUrl: "sc-domain:kweqoo.net",
@@ -211,6 +242,44 @@ describe("collectRows", () => {
       totals: { clicks: 3, impressions: 120, ctr: 0.025, position: 8.4 },
     });
     expect(json.errors).toEqual([]);
+    expect(json.unverifiedSearchConsoleProperties).toEqual(["https://kabuto-zukan.kweqoo.net/"]);
+  });
+
+  it("keeps hostName casings apart, matches them in lowercase, and queries each Search Console scope once", async () => {
+    const { deps, calls } = fakeGoogle({ caseVariants: true });
+    const m = await buildMapping(deps);
+    const range = { start: "2026-09-28", end: "2026-10-04", basis: "given" as const };
+    const { rows } = await collectRows(m, range, deps);
+    const cars = rows.filter((r) => r.property.id === "1");
+    // The stream host is not added again in lowercase, and the casing is not added into another row.
+    expect(cars.map((r) => [r.host, r.ga4?.users])).toEqual([
+      ["kabuto-zukan.kweqoo.net", 7],
+      ["Cars.Printemps.Tokyo", 2],
+    ]);
+    // kabuto-zukan.kweqoo.net appears under properties 1 and 2 but is queried once.
+    const kabuto = calls.filter((c) => c.body?.dataState === "final" && JSON.stringify(c.body?.dimensionFilterGroups).includes("kabuto"));
+    expect(kabuto).toHaveLength(1);
+    expect(rows.filter((r) => r.host === "kabuto-zukan.kweqoo.net").map((r) => r.gscTotals?.clicks)).toEqual([3, 3]);
+  });
+
+  it("passes GA4 report quality flags on as notes, without failing", async () => {
+    const { deps } = fakeGoogle({
+      ga4Meta: { dataLossFromOtherRow: true, subjectToThresholding: true, samplingMetadatas: [{}], dataTruncationReasons: ["ROW_LIMIT"] },
+    });
+    const m = await buildMapping(deps);
+    const range = { start: "2026-09-28", end: "2026-10-04", basis: "given" as const };
+    const { rows, problems, notes } = await collectRows(m, range, deps);
+    expect(problems).toEqual([]);
+    expect(notes.map((n) => n.note)).toEqual([
+      'some hostnames were rolled into an "(other)" row, so a hostname shown with zeros may have traffic',
+      "the report is subject to thresholding, so small numbers may be withheld",
+      "the report is sampled",
+      "the report is truncated (ROW_LIMIT)",
+    ]);
+    const md = renderReportMarkdown(rows, m, range, problems, [], notes);
+    expect(md).toContain("## Notes");
+    expect(md).toContain('- GA4 property 2: some hostnames were rolled into an "(other)" row');
+    expect(JSON.parse(renderReportJson(rows, m, range, problems, [], notes)).notes).toHaveLength(4);
   });
 
   it("records a failing GA4 property as a problem and keeps its stream host row", async () => {
