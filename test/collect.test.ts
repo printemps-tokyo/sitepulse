@@ -15,7 +15,7 @@ interface Options {
   noGsc?: boolean;
   /** GA4 metadata flags for property 2's report. */
   ga4Meta?: Record<string, unknown>;
-  /** Property 1 records its host in two casings, and property 2 also records it. */
+  /** Property 1 records its host in two casings, and a host property 2 also records. */
   caseVariants?: boolean;
 }
 
@@ -72,7 +72,12 @@ function fakeGoogle(opts: Options = {}) {
     if (url.includes(":runReport")) {
       if (opts.failGa4 && url.includes(`/properties/${opts.failGa4}:`)) return json({ error: { message: "denied" } }, 403);
       if (url.includes("/properties/1:")) {
-        if (opts.caseVariants) return json({ rowCount: 2, rows: [ga4Row("kabuto-zukan.kweqoo.net", 7), ga4Row("Cars.Printemps.Tokyo", 2)] });
+        if (opts.caseVariants) {
+          return json({
+            rowCount: 3,
+            rows: [ga4Row("cars.printemps.tokyo", 10), ga4Row("kabuto-zukan.kweqoo.net", 7), ga4Row("Cars.Printemps.Tokyo", 2)],
+          });
+        }
         return json({ rowCount: 1, rows: [ga4Row("cars.printemps.tokyo", 10)] });
       }
       if (url.includes("/properties/2:")) {
@@ -253,8 +258,13 @@ describe("collectRows", () => {
     const cars = rows.filter((r) => r.property.id === "1");
     // The stream host is not added again in lowercase, and the casing is not added into another row.
     expect(cars.map((r) => [r.host, r.ga4?.users])).toEqual([
+      ["cars.printemps.tokyo", 10],
       ["kabuto-zukan.kweqoo.net", 7],
       ["Cars.Printemps.Tokyo", 2],
+    ]);
+    expect(cars.filter((r) => r.host.toLowerCase() === "cars.printemps.tokyo").map((r) => r.gscNote)).toEqual([
+      "no Search Console property",
+      "no Search Console property",
     ]);
     // kabuto-zukan.kweqoo.net appears under properties 1 and 2 but is queried once.
     const kabuto = calls.filter((c) => c.body?.dataState === "final" && JSON.stringify(c.body?.dimensionFilterGroups).includes("kabuto"));
@@ -264,7 +274,15 @@ describe("collectRows", () => {
 
   it("passes GA4 report quality flags on as notes, without failing", async () => {
     const { deps } = fakeGoogle({
-      ga4Meta: { dataLossFromOtherRow: true, subjectToThresholding: true, samplingMetadatas: [{}], dataTruncationReasons: ["ROW_LIMIT"] },
+      ga4Meta: {
+        dataLossFromOtherRow: true,
+        subjectToThresholding: true,
+        samplingMetadatas: [{}],
+        dataTruncationReasons: [
+          { dataTruncationType: "DATA_TRUNCATION_TYPE_DATE_RANGE", dataTruncationDate: "2026-09-30" },
+          { dataTruncationMessage: "Data is truncated." },
+        ],
+      },
     });
     const m = await buildMapping(deps);
     const range = { start: "2026-09-28", end: "2026-10-04", basis: "given" as const };
@@ -274,12 +292,13 @@ describe("collectRows", () => {
       'some hostnames were rolled into an "(other)" row, so a hostname shown with zeros may have traffic',
       "the report is subject to thresholding, so small numbers may be withheld",
       "the report is sampled",
-      "the report is truncated (ROW_LIMIT)",
+      "the report is truncated (DATA_TRUNCATION_TYPE_DATE_RANGE, from 2026-09-30)",
+      "the report is truncated (Data is truncated.)",
     ]);
     const md = renderReportMarkdown(rows, m, range, problems, [], notes);
     expect(md).toContain("## Notes");
     expect(md).toContain('- GA4 property 2: some hostnames were rolled into an "(other)" row');
-    expect(JSON.parse(renderReportJson(rows, m, range, problems, [], notes)).notes).toHaveLength(4);
+    expect(JSON.parse(renderReportJson(rows, m, range, problems, [], notes)).notes).toHaveLength(5);
   });
 
   it("records a failing GA4 property as a problem and keeps its stream host row", async () => {

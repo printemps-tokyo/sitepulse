@@ -36,9 +36,9 @@ export function describeRange(range: Range, zones: string[] = []): string {
     case "partial":
       return `${days}, ending on the earliest last day of complete Search Console data among the properties that reported one; the others did not report one (failed requests are listed under Errors), so their newest days may still change. ${tz}`;
     case "assumed":
-      return `${days}: Search Console did not report where complete data ends, so the range ends on the last day complete in every time zone involved, and Search Console's newest days may still change. ${tz}`;
+      return `${days}: Search Console did not report where complete data ends, so the range ends on the last day that has ended in every time zone involved, and Search Console's newest days may still change. ${tz}`;
     case "ga4":
-      return `${days}, the last complete days in every GA4 property's time zone. No Search Console property is visible, so there are no Search Console numbers.`;
+      return `${days}, ending on the last day that has ended in every GA4 property's time zone; GA4 may still be processing the newest days, so they can change. No Search Console property is visible, so there are no Search Console numbers.`;
   }
 }
 

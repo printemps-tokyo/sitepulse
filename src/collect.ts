@@ -173,7 +173,7 @@ export async function rangeFor(m: Mapping, opts: ReportOptions, now: Date, deps:
   const zones = [...new Set(m.properties.map((p) => p.timeZone).filter(Boolean))];
   const ga4Yesterdays = zones.map((z) => yesterdayIn(z, now));
   if (m.sites.length === 0) {
-    // GA4 only: complete days in every property's own time zone.
+    // GA4 only: days that have ended in every property's own time zone.
     return { range: chooseRange(opts.days, [], ga4Yesterdays.length > 0 ? ga4Yesterdays : [addDays(today, -1)]), problems };
   }
   return { range: chooseRange(opts.days, ends, [addDays(today, -1), ...ga4Yesterdays]), problems };

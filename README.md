@@ -125,7 +125,8 @@ printed.
   - If none reports a date, the range ends on the earliest "yesterday" among
     Pacific Time and the GA4 properties' time zones, and says so.
 - With no Search Console property visible, it ends on the earliest
-  "yesterday" among the GA4 properties' time zones
+  "yesterday" among the GA4 properties' time zones (GA4 may still be
+  processing the newest days, so they can change)
   ([properties.get](https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/properties)
   `timeZone`).
 - GA4 reads dates in each property's reporting time zone
