@@ -1,0 +1,172 @@
+/**
+ * The Google API calls sitepulse makes (network). References, read 2026-10-07:
+ * - GA4 Admin: accountSummaries.list, properties.dataStreams.list
+ *   https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/accountSummaries/list
+ *   https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/properties.dataStreams/list
+ * - GA4 Data: properties.runReport
+ *   https://developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/properties/runReport
+ * - Search Console: sites.list, searchAnalytics.query
+ *   https://developers.google.com/webmaster-tools/v1/sites/list
+ *   https://developers.google.com/webmaster-tools/v1/searchanalytics/query
+ */
+
+import { exchange, type Sleep } from "./http.js";
+import type { Ga4Totals, GscSite, GscTotals } from "./types.js";
+
+export interface Deps {
+  token: string;
+  fetchFn?: typeof fetch;
+  sleep?: Sleep;
+}
+
+/** A hint for errors the user can act on. */
+function hint(url: string, status: number, body: string): string {
+  if (status === 429 || /quota/i.test(body)) return " (quota exceeded: wait and try again)";
+  if (status === 403 && /has not been used|is disabled/i.test(body)) {
+    const api = url.includes("analyticsadmin")
+      ? "Google Analytics Admin API"
+      : url.includes("analyticsdata")
+        ? "Google Analytics Data API"
+        : "Google Search Console API";
+    return ` (enable the ${api} in the key's Google Cloud project)`;
+  }
+  if (status === 403) return " (add the service account's email as a user of this property)";
+  return "";
+}
+
+async function call(url: string, init: RequestInit, deps: Deps): Promise<unknown> {
+  const res = await exchange(
+    url,
+    { ...init, headers: { authorization: `Bearer ${deps.token}`, ...(init.headers as Record<string, string> | undefined) } },
+    deps.fetchFn ?? fetch,
+    deps.sleep,
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.text.slice(0, 300)}${hint(url, res.status, res.text)}`);
+  return JSON.parse(res.text) as unknown;
+}
+
+/** Follow nextPageToken across pages of a GET list call. */
+async function listAll<T>(url: string, key: string, deps: Deps): Promise<T[]> {
+  const out: T[] = [];
+  let pageToken: string | undefined;
+  for (let i = 0; i < 100; i++) {
+    const u = new URL(url);
+    u.searchParams.set("pageSize", "200");
+    if (pageToken) u.searchParams.set("pageToken", pageToken);
+    const page = (await call(u.toString(), { method: "GET" }, deps)) as Record<string, unknown>;
+    out.push(...((page[key] as T[] | undefined) ?? []));
+    pageToken = page.nextPageToken as string | undefined;
+    if (!pageToken) return out;
+  }
+  throw new Error(`${url} returned more than 100 pages; stopping`);
+}
+
+export interface AccountSummary {
+  account?: string;
+  displayName?: string;
+  propertySummaries?: { property?: string; displayName?: string }[];
+}
+
+export async function ga4AccountSummaries(deps: Deps): Promise<AccountSummary[]> {
+  try {
+    return await listAll<AccountSummary>("https://analyticsadmin.googleapis.com/v1beta/accountSummaries", "accountSummaries", deps);
+  } catch (err) {
+    throw new Error(`GA4 accountSummaries.list failed (${(err as Error).message})`);
+  }
+}
+
+export interface DataStream {
+  type?: string;
+  webStreamData?: { defaultUri?: string };
+}
+
+export async function ga4DataStreams(propertyId: string, deps: Deps): Promise<DataStream[]> {
+  try {
+    return await listAll<DataStream>(
+      `https://analyticsadmin.googleapis.com/v1beta/properties/${propertyId}/dataStreams`,
+      "dataStreams",
+      deps,
+    );
+  } catch (err) {
+    throw new Error(`GA4 dataStreams.list for ${propertyId} failed (${(err as Error).message})`);
+  }
+}
+
+/** A GA4 date range: explicit YYYY-MM-DD dates, or the relative forms (NdaysAgo, yesterday). */
+export interface Ga4Range {
+  startDate: string;
+  endDate: string;
+}
+
+/**
+ * GA4 totals for a range: a report with no dimensions, so the single row is
+ * GA4's own total (users and sessions deduplicated across the range).
+ */
+export async function ga4Totals(propertyId: string, range: Ga4Range, deps: Deps): Promise<Ga4Totals> {
+  let body: { rows?: { metricValues?: { value?: string }[] }[] };
+  try {
+    body = (await call(
+      `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          dateRanges: [range],
+          metrics: [{ name: "totalUsers" }, { name: "sessions" }, { name: "screenPageViews" }],
+        }),
+      },
+      deps,
+    )) as typeof body;
+  } catch (err) {
+    throw new Error(`GA4 runReport for ${propertyId} failed (${(err as Error).message})`);
+  }
+  const v = body.rows?.[0]?.metricValues ?? [];
+  const n = (i: number) => Number(v[i]?.value ?? 0);
+  return { users: n(0), sessions: n(1), pageviews: n(2) };
+}
+
+export async function gscSites(deps: Deps): Promise<GscSite[]> {
+  let body: { siteEntry?: { siteUrl?: string; permissionLevel?: string }[] };
+  try {
+    body = (await call("https://www.googleapis.com/webmasters/v3/sites", { method: "GET" }, deps)) as typeof body;
+  } catch (err) {
+    throw new Error(`Search Console sites.list failed (${(err as Error).message})`);
+  }
+  return (body.siteEntry ?? []).map((s) => ({ siteUrl: s.siteUrl ?? "", permissionLevel: s.permissionLevel ?? "" }));
+}
+
+export interface GscQueryBody {
+  startDate: string;
+  endDate: string;
+  dimensions?: string[];
+  dataState?: "final" | "all";
+  dimensionFilterGroups?: { groupType?: "and"; filters: { dimension: "page"; operator: "includingRegex"; expression: string }[] }[];
+}
+
+export interface GscQueryResponse {
+  rows?: { keys?: string[]; clicks?: number; impressions?: number; ctr?: number; position?: number }[];
+  responseAggregationType?: string;
+  metadata?: { firstIncompleteDate?: string };
+}
+
+export async function gscQuery(siteUrl: string, body: GscQueryBody, deps: Deps): Promise<GscQueryResponse> {
+  try {
+    return (await call(
+      `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+      deps,
+    )) as GscQueryResponse;
+  } catch (err) {
+    throw new Error(`Search Console query for ${siteUrl} failed (${(err as Error).message})`);
+  }
+}
+
+export function gscTotalsOf(res: GscQueryResponse): GscTotals {
+  const r = res.rows?.[0];
+  return {
+    clicks: r?.clicks ?? 0,
+    impressions: r?.impressions ?? 0,
+    ctr: r?.ctr ?? 0,
+    position: typeof r?.position === "number" ? r.position : null,
+  };
+}

@@ -1,0 +1,51 @@
+{
+  "name": "@printemps-tokyo/sitepulse",
+  "version": "0.1.0",
+  "description": "GA4 and Google Search Console side by side, one row per site: users, sessions, pageviews, clicks, impressions, CTR and position. Zero-dependency CLI.",
+  "type": "module",
+  "license": "MIT",
+  "author": "printemps.tokyo <develop@printemps.tokyo>",
+  "homepage": "https://github.com/printemps-tokyo/sitepulse#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/printemps-tokyo/sitepulse.git"
+  },
+  "bugs": {
+    "url": "https://github.com/printemps-tokyo/sitepulse/issues"
+  },
+  "keywords": [
+    "ga4",
+    "google-analytics",
+    "search-console",
+    "seo",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "sitepulse": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^2.0.0"
+  }
+}
