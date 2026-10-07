@@ -10,8 +10,10 @@ export interface Ga4Property {
   id: string;
   name: string;
   account: string;
-  /** Hosts of the property's web data streams (from webStreamData.defaultUri), lowercased. */
+  /** Hostnames of the property's web data streams (from webStreamData.defaultUri), lowercased, no port. */
   hosts: string[];
+  /** The property's reporting time zone (IANA), "" when it could not be read. */
+  timeZone: string;
 }
 
 /** A Search Console property and the caller's permission on it. */

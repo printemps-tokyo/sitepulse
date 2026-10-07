@@ -92,37 +92,71 @@ export async function ga4DataStreams(propertyId: string, deps: Deps): Promise<Da
   }
 }
 
-/** A GA4 date range: explicit YYYY-MM-DD dates, or the relative forms (NdaysAgo, yesterday). */
+/** A property's reporting time zone (properties.get, field timeZone, IANA). */
+export async function ga4TimeZone(propertyId: string, deps: Deps): Promise<string> {
+  try {
+    const p = (await call(`https://analyticsadmin.googleapis.com/v1beta/properties/${propertyId}`, { method: "GET" }, deps)) as {
+      timeZone?: string;
+    };
+    return p.timeZone ?? "";
+  } catch (err) {
+    throw new Error(`GA4 properties.get for ${propertyId} failed (${(err as Error).message})`);
+  }
+}
+
+/** Rows per runReport page. */
+export const GA4_PAGE = 1000;
+
+/** A GA4 date range, explicit YYYY-MM-DD dates read in the property's time zone. */
 export interface Ga4Range {
   startDate: string;
   endDate: string;
 }
 
 /**
- * GA4 totals for a range: a report with no dimensions, so the single row is
- * GA4's own total (users and sessions deduplicated across the range).
+ * GA4 totals per hostName for a range. Each row is GA4's own total for that
+ * hostname (users and sessions deduplicated across the range within it).
+ * The hostName dimension is "the subdomain and domain names of a URL"
+ * (GA4 API schema).
  */
-export async function ga4Totals(propertyId: string, range: Ga4Range, deps: Deps): Promise<Ga4Totals> {
-  let body: { rows?: { metricValues?: { value?: string }[] }[] };
-  try {
-    body = (await call(
-      `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          dateRanges: [range],
-          metrics: [{ name: "totalUsers" }, { name: "sessions" }, { name: "screenPageViews" }],
-        }),
-      },
-      deps,
-    )) as typeof body;
-  } catch (err) {
-    throw new Error(`GA4 runReport for ${propertyId} failed (${(err as Error).message})`);
+export async function ga4ByHost(propertyId: string, range: Ga4Range, deps: Deps): Promise<Map<string, Ga4Totals>> {
+  type Body = { rowCount?: number; rows?: { dimensionValues?: { value?: string }[]; metricValues?: { value?: string }[] }[] };
+  const out = new Map<string, Ga4Totals>();
+  // Paged with offset/limit until rowCount rows are read (runReport reference).
+  for (let offset = 0, page = 0; page < 100; page++) {
+    let body: Body;
+    try {
+      body = (await call(
+        `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            dateRanges: [range],
+            dimensions: [{ name: "hostName" }],
+            metrics: [{ name: "totalUsers" }, { name: "sessions" }, { name: "screenPageViews" }],
+            offset: String(offset),
+            limit: String(GA4_PAGE),
+          }),
+        },
+        deps,
+      )) as Body;
+    } catch (err) {
+      throw new Error(`GA4 runReport for ${propertyId} failed (${(err as Error).message})`);
+    }
+    const rows = body.rows ?? [];
+    for (const row of rows) {
+      const host = (row.dimensionValues?.[0]?.value ?? "").toLowerCase();
+      const v = row.metricValues ?? [];
+      const n = (i: number) => Number(v[i]?.value ?? 0);
+      const prev = out.get(host) ?? { users: 0, sessions: 0, pageviews: 0 };
+      // hostName values differing only in case fold together; users may then overlap.
+      out.set(host, { users: prev.users + n(0), sessions: prev.sessions + n(1), pageviews: prev.pageviews + n(2) });
+    }
+    offset += rows.length;
+    if (rows.length === 0 || offset >= (body.rowCount ?? 0)) return out;
   }
-  const v = body.rows?.[0]?.metricValues ?? [];
-  const n = (i: number) => Number(v[i]?.value ?? 0);
-  return { users: n(0), sessions: n(1), pageviews: n(2) };
+  throw new Error(`GA4 runReport for ${propertyId} returned more than 100 pages; stopping`);
 }
 
 export async function gscSites(deps: Deps): Promise<GscSite[]> {

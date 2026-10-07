@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { readFile, writeFile } from "node:fs/promises";
 
 import { requestAccessToken } from "./auth.js";
-import { buildMapping, collectRows, rangeFor } from "./collect.js";
+import { buildMapping, collectRows, rangeFor, unusedSites } from "./collect.js";
 import { isDate, todayPT } from "./match.js";
 import { renderMappingJson, renderMappingMarkdown, renderReportJson, renderReportMarkdown } from "./render.js";
 import type { ServiceAccount } from "./types.js";
@@ -16,10 +16,10 @@ Usage:
   sitepulse --list                   How GA4 properties were matched to
                                      Search Console properties
 
-Sites are the GA4 properties the credentials can see. Each is matched to a
-Search Console property through the host of its web data stream: a
-URL-prefix property at that host, else a Domain property covering it,
-filtered to the host's pages.
+One row per hostname each GA4 property recorded (its hostName dimension),
+matched to a Search Console property for the same host: a URL-prefix property
+at that host, else a Domain property covering it, filtered to the host's
+pages. GA4 and Search Console use the same dates.
 
 Options:
   --days <n>          Days to report (default: 7). The range ends on the last
@@ -29,7 +29,8 @@ Options:
   --key-file <path>   Service-account JSON key (or env GOOGLE_APPLICATION_CREDENTIALS)
   --token <token>     An OAuth access token with both the analytics.readonly and
                       webmasters.readonly scopes (or env SITEPULSE_ACCESS_TOKEN).
-                      Command-line credentials win over environment ones.
+                      Pass one of --key-file and --token, not both; either wins
+                      over the environment variables.
   --format <md|json>  Output format (default: md)
   -o, --output <file> Write to a file (default: stdout)
   -h, --help          Show this help
@@ -130,14 +131,20 @@ async function main(): Promise<number> {
     const deps = { token };
     const mapping = await buildMapping(deps);
     let output: string;
-    let failed = mapping.errors.length > 0 || mapping.gscError !== undefined;
+    let failed = mapping.problems.length > 0 || mapping.gscError !== undefined;
     if (values.list) {
       output = format === "json" ? renderMappingJson(mapping) : renderMappingMarkdown(mapping);
     } else {
-      const range = await rangeFor(mapping, { days, ...(values.start ? { start: values.start, end: values.end } : {}) }, today, deps);
-      const rows = await collectRows(mapping, range, deps);
-      failed ||= rows.some((r) => r.ga4Error || r.gscError);
-      output = format === "json" ? renderReportJson(rows, mapping, range) : renderReportMarkdown(rows, mapping, range);
+      const fixed = values.start ? { start: values.start, end: values.end } : {};
+      const { range, problems: rangeProblems } = await rangeFor(mapping, { days, ...fixed }, new Date(), deps);
+      const { rows, problems: rowProblems } = await collectRows(mapping, range, deps);
+      const problems = [...rangeProblems, ...rowProblems];
+      failed ||= problems.length > 0;
+      const unused = unusedSites(mapping, rows);
+      output =
+        format === "json"
+          ? renderReportJson(rows, mapping, range, problems, unused)
+          : renderReportMarkdown(rows, mapping, range, problems, unused);
     }
     if (values.output) {
       await writeFile(values.output, output, "utf8");

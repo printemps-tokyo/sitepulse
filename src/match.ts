@@ -5,13 +5,28 @@
 
 import type { GscSite } from "./types.js";
 
-/** The host of a web stream's defaultUri, lowercased; "" when it does not parse. */
+/**
+ * The hostname of a web stream's defaultUri, lowercased, without a port;
+ * "" when it does not parse. GA4's hostName dimension and Search Console's
+ * Domain properties both work on hostnames.
+ */
 export function hostOf(uri: string): string {
   try {
-    return new URL(uri.includes("://") ? uri : `https://${uri}`).host.toLowerCase();
+    return new URL(uri.includes("://") ? uri : `https://${uri}`).hostname.toLowerCase();
   } catch {
     return "";
   }
+}
+
+/** Whether a GA4 hostName value is a real hostname ("(not set)" and the like are not). */
+export function isHostname(value: string): boolean {
+  return /^[a-z0-9.-]+\.[a-z0-9-]+$/i.test(value);
+}
+
+/** Yesterday's date in an IANA time zone, as YYYY-MM-DD. */
+export function yesterdayIn(timeZone: string, now: Date = new Date()): string {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  return addDays(today, -1);
 }
 
 /** How a host was matched to a Search Console property. */
@@ -39,7 +54,7 @@ export function matchGsc(host: string, sites: GscSite[]): GscMatch | undefined {
     sites.find((s) => {
       try {
         const u = new URL(s.siteUrl);
-        return u.protocol === `${scheme}:` && u.host.toLowerCase() === host && u.pathname === "/";
+        return u.protocol === `${scheme}:` && u.hostname.toLowerCase() === host && u.pathname === "/";
       } catch {
         return false;
       }
@@ -96,26 +111,46 @@ export function lastCompleteDay(firstIncompleteDate: string | undefined): string
   return firstIncompleteDate ? addDays(firstIncompleteDate, -1) : undefined;
 }
 
-/** The range every row shares. */
+/** The range every row shares: explicit dates, the same for GA4 and Search Console. */
 export interface Range {
   start: string;
   end: string;
   /**
-   * "given": --start/--end. "search-console": ends on the earliest last
-   * complete Search Console day among the matched properties. "assumed":
-   * properties were matched but none reported where complete data ends, so
-   * the range ends yesterday (PT). "ga4": nothing matched in Search Console,
-   * so GA4's own relative range is used (each property's time zone).
+   * "given": --start/--end.
+   * "search-console": ends on the earliest last complete day reported by
+   *   every visible Search Console property.
+   * "partial": some properties reported a last complete day and some did
+   *   not (or failed); the range ends on the earliest reported one.
+   * "assumed": none reported one; the range ends on the earliest
+   *   "yesterday" among Pacific Time and the GA4 time zones.
+   * "ga4": no Search Console property is visible; the range ends on the
+   *   earliest "yesterday" among the GA4 properties' time zones.
    */
-  basis: "given" | "search-console" | "assumed" | "ga4";
+  basis: "given" | "search-console" | "partial" | "assumed" | "ga4";
 }
 
-/** Pick the shared range from the matched properties' last complete days. */
-export function chooseRange(days: number, today: string, lastComplete: (string | undefined)[], anyMatched: boolean): Range {
-  if (!anyMatched) {
-    return { start: `${days}daysAgo`, end: "yesterday", basis: "ga4" };
-  }
+/**
+ * Pick the shared range.
+ *
+ * `lastComplete` holds one entry per visible Search Console property: its
+ * last complete day, or undefined when it did not report one or failed.
+ * `yesterdays` holds "yesterday" in Pacific Time and in each GA4 time zone,
+ * so a fallback end is a complete day everywhere.
+ */
+export function chooseRange(days: number, lastComplete: (string | undefined)[], yesterdays: string[]): Range {
+  const fallback = [...yesterdays].sort()[0]!;
   const known = lastComplete.filter((d): d is string => d !== undefined).sort();
-  const end = known[0] ?? addDays(today, -1);
-  return { start: addDays(end, -(days - 1)), end, basis: known.length > 0 ? "search-console" : "assumed" };
+  let end: string;
+  let basis: Range["basis"];
+  if (lastComplete.length === 0) {
+    end = fallback;
+    basis = "ga4";
+  } else if (known.length === 0) {
+    end = fallback;
+    basis = "assumed";
+  } else {
+    end = known[0]!;
+    basis = known.length === lastComplete.length ? "search-console" : "partial";
+  }
+  return { start: addDays(end, -(days - 1)), end, basis };
 }
