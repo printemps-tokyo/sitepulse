@@ -24,7 +24,7 @@ same dates.
 
 ## Requirements
 
-- Node.js >= 20
+- Node.js >= 22
 - A Google service account that is a Viewer of your GA4 properties and a user
   of your Search Console properties
 
