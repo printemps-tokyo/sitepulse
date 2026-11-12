@@ -4,6 +4,10 @@
  */
 
 import type { GscSite } from "./types.js";
+import { addDays, isDate, todayPT } from "./shared/pt-date.js";
+
+// Search Console dates are Pacific Time; the date helpers are shared with gsc.
+export { addDays, isDate, todayPT };
 
 /**
  * The hostname of a web stream's defaultUri, lowercased, without a port;
@@ -78,25 +82,6 @@ export function matchGsc(host: string, sites: GscSite[]): GscMatch | undefined {
 export function hostFilterExpression(host: string): string {
   const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return `^https?://${escaped}(:[0-9]+)?(/|$)`;
-}
-
-/** Search Console dates are Pacific Time ("in PT time (UTC - 7:00/8:00)", searchAnalytics.query reference). */
-export function todayPT(now: Date = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Los_Angeles",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-}
-
-export function addDays(date: string, n: number): string {
-  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
-  return new Date(Date.UTC(y, m - 1, d) + n * 86_400_000).toISOString().slice(0, 10);
-}
-
-export function isDate(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) && addDays(value, 0) === value;
 }
 
 export function daysBetween(start: string, end: string): number {

@@ -1,6 +1,9 @@
 /**
- * One HTTP exchange with a timeout and a bounded retry, shared by the token
- * request and the Search Console calls.
+ * One HTTP exchange with a timeout and a bounded retry, used by the token
+ * request and every Google API call.
+ *
+ * Shared verbatim by ga4, gsc and sitepulse (src/shared/); the Shared check
+ * workflow fails when the copies drift apart, so change all three together.
  *
  * The timeout covers the whole exchange, body included, and a failure while
  * reading the body is retried like any other network failure. Server errors

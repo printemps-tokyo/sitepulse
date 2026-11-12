@@ -10,7 +10,7 @@
  *   https://developers.google.com/webmaster-tools/v1/searchanalytics/query
  */
 
-import { exchange, type Sleep } from "./http.js";
+import { exchange, type Sleep } from "./shared/http.js";
 import type { Ga4Totals, GscSite, GscTotals } from "./types.js";
 
 export interface Deps {

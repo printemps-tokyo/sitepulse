@@ -1,9 +1,5 @@
 /** A Google service-account key, as found in the downloaded JSON file. */
-export interface ServiceAccount {
-  client_email: string;
-  private_key: string;
-  token_uri?: string;
-}
+export type { ServiceAccount } from "./shared/google-auth.js";
 
 /** A GA4 property and the hosts of its web data streams. */
 export interface Ga4Property {
