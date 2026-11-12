@@ -71,7 +71,7 @@ export async function ga4AccountSummaries(deps: Deps): Promise<AccountSummary[]>
   try {
     return await listAll<AccountSummary>("https://analyticsadmin.googleapis.com/v1beta/accountSummaries", "accountSummaries", deps);
   } catch (err) {
-    throw new Error(`GA4 accountSummaries.list failed (${(err as Error).message})`);
+    throw new Error(`GA4 accountSummaries.list failed (${(err as Error).message})`, { cause: err });
   }
 }
 
@@ -88,7 +88,7 @@ export async function ga4DataStreams(propertyId: string, deps: Deps): Promise<Da
       deps,
     );
   } catch (err) {
-    throw new Error(`GA4 dataStreams.list for ${propertyId} failed (${(err as Error).message})`);
+    throw new Error(`GA4 dataStreams.list for ${propertyId} failed (${(err as Error).message})`, { cause: err });
   }
 }
 
@@ -100,7 +100,7 @@ export async function ga4TimeZone(propertyId: string, deps: Deps): Promise<strin
     };
     return p.timeZone ?? "";
   } catch (err) {
-    throw new Error(`GA4 properties.get for ${propertyId} failed (${(err as Error).message})`);
+    throw new Error(`GA4 properties.get for ${propertyId} failed (${(err as Error).message})`, { cause: err });
   }
 }
 
@@ -165,7 +165,7 @@ export async function ga4ByHost(propertyId: string, range: Ga4Range, deps: Deps)
         deps,
       )) as Body;
     } catch (err) {
-      throw new Error(`GA4 runReport for ${propertyId} failed (${(err as Error).message})`);
+      throw new Error(`GA4 runReport for ${propertyId} failed (${(err as Error).message})`, { cause: err });
     }
     const md = body.metadata ?? {};
     if (md.dataLossFromOtherRow) notes.add('some hostnames were rolled into an "(other)" row, so a hostname shown with zeros may have traffic');
@@ -197,7 +197,7 @@ export async function gscSites(deps: Deps): Promise<GscSite[]> {
   try {
     body = (await call("https://www.googleapis.com/webmasters/v3/sites", { method: "GET" }, deps)) as typeof body;
   } catch (err) {
-    throw new Error(`Search Console sites.list failed (${(err as Error).message})`);
+    throw new Error(`Search Console sites.list failed (${(err as Error).message})`, { cause: err });
   }
   return (body.siteEntry ?? []).map((s) => ({ siteUrl: s.siteUrl ?? "", permissionLevel: s.permissionLevel ?? "" }));
 }
@@ -224,7 +224,7 @@ export async function gscQuery(siteUrl: string, body: GscQueryBody, deps: Deps):
       deps,
     )) as GscQueryResponse;
   } catch (err) {
-    throw new Error(`Search Console query for ${siteUrl} failed (${(err as Error).message})`);
+    throw new Error(`Search Console query for ${siteUrl} failed (${(err as Error).message})`, { cause: err });
   }
 }
 

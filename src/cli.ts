@@ -65,7 +65,7 @@ async function resolveToken(keyFile: string | undefined, token: string | undefin
   try {
     sa = JSON.parse(await readFile(path, "utf8")) as ServiceAccount;
   } catch (err) {
-    throw new Error(`cannot read service-account key "${path}": ${(err as Error).message}`);
+    throw new Error(`cannot read service-account key "${path}": ${(err as Error).message}`, { cause: err });
   }
   if (!sa.client_email || !sa.private_key) {
     throw new Error(`"${path}" is not a service-account key (missing client_email/private_key)`);

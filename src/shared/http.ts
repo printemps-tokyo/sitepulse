@@ -45,7 +45,7 @@ export async function exchange(
         await sleep(1000 * 2 ** attempt);
         continue;
       }
-      throw new Error(`request failed: ${(err as Error).message}`);
+      throw new Error(`request failed: ${(err as Error).message}`, { cause: err });
     }
     if (result.status >= 500 && attempt < RETRIES) {
       await sleep(1000 * 2 ** attempt);
